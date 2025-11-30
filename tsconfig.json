@@ -1,0 +1,22 @@
+{
+    "compilerOptions": {
+        "target": "es2020",
+        "module": "commonjs",
+        "rootDir": "./src", /* 指定源代码目录。*/
+        "outDir": "./dist", /* 指定编译后的 JS 文件输出目录。*/
+        "esModuleInterop": true, /* 允许 CommonJS 和 ES Modules 之间互操作 */
+        "forceConsistentCasingInFileNames": true,
+        "strict": true, /* 启用所有严格类型检查选项 */
+        "skipLibCheck": true, /* 跳过声明文件检查 */
+        "lib": [
+            "es2020"
+        ],
+        "sourceMap": true /* 生成 source map 以方便调试 */
+    },
+    "include": [
+        "src/**/*"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}
