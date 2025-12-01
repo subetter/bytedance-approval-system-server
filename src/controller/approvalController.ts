@@ -357,23 +357,15 @@ export const withdrawApproval = async (ctx: CustomContext) => {
     const { userId } = getAuthUser(ctx);
 
     try {
-        // 1. 检查权限和状态
-        const [checkResult] = await pool.execute<RowDataPacket[]>(
-            `SELECT status, applicant_id FROM approval_forms WHERE id = ?`, [id]
-        );
 
-        if (checkResult.length === 0 || checkResult[0].applicant_id !== userId || checkResult[0].status !== '0') {
-            ctx.throw(403, '无权撤回或审批单已完成/非待审批状态');
-        }
-
-        // 2. 更新状态为 '已撤回' ('3')
+        // 2. 标记为已删除 (is_deleted = TRUE)
         await pool.execute(
-            `UPDATE approval_forms SET status = '3', approval_at = NOW(), current_approver_id = NULL 
+            `UPDATE approval_forms SET is_deleted = TRUE
              WHERE id = ?`,
             [id]
         );
 
-        // 3. 插入日志
+        // 3. 插入日志（记录删除操作）
         await pool.execute(
             `INSERT INTO approval_logs (form_id, operator_id, action, comment) 
              VALUES (?, ?, 'WITHDRAW', '申请人撤回审批单')`,
@@ -381,7 +373,7 @@ export const withdrawApproval = async (ctx: CustomContext) => {
         );
 
         ctx.body = { code: 200, message: '审批单撤回成功', data: { id } };
-    } catch (error: any) { // 修复 ts(18046) 错误
+    } catch (error: any) {
         console.error(`撤回审批单 ${id} 失败:`, error);
         ctx.throw(error.status || 500, error.message || '审批单撤回失败', { details: error.message });
     }
