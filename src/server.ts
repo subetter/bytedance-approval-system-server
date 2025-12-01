@@ -5,6 +5,7 @@ import Koa, { Context } from 'koa'; // 引入 Koa 和 Context 类型
 import './config/db';
 import errorHandlerMiddleware from './middleware/errorHandler';
 import loggerMiddleware from './middleware/logger';
+import bodyParser from 'koa-bodyparser';
 import apiRouter from './routes' // 引入路由汇总文件 (src/routes/index.ts)
 
 // 2.创建 Koa 应用实例
@@ -19,6 +20,9 @@ app.use(errorHandlerMiddleware);
 
 // 日志中间件
 app.use(loggerMiddleware);
+
+// Body parser middleware (解析 JSON/urlencoded form)
+app.use(bodyParser({ enableTypes: ['json', 'form'], jsonLimit: '10mb' }));
 
 // 3. 注册路由
 app.use(apiRouter.routes());
