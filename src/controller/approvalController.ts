@@ -151,7 +151,7 @@ export const listApprovals = async (ctx: CustomContext) => {
         const listSql = `
              SELECT 
              af.department_id,
-                af.id, af.project_name, af.status, af.content,af.created_at, af.approval_at,
+                af.id, af.project_name, af.status, af.content,af.execute_date, af.created_at, af.approval_at,
                 u.display_name AS applicant_name, 
                 d.name AS department_name, -- 联表获取部门名称
                 appr.display_name AS current_approver_name -- 联表获取当前审批人名称
@@ -262,6 +262,7 @@ export const createApproval = async (ctx: CustomContext) => {
     // departmentId 现在是 BIGINT，需要确保前端传的是 ID
     const { projectName, content, departmentId, executeDate, attachmentIds } = ctx.request.body || {};
     const { userId } = getAuthUser(ctx);
+    console.log('-------ctx.body-------', ctx.request.body);
 
     if (!projectName || !content || !departmentId || !executeDate) {
         ctx.throw(400, '缺少必要的表单字段');

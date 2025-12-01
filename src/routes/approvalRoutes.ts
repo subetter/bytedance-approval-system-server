@@ -2,9 +2,9 @@ import Router from '@koa/router';
 import {
     listApprovals,
     getApprovalDetail,
-    // createApproval,
-    // updateApproval,
-    // withdrawApproval,
+    createApproval,
+    updateApproval,
+    withdrawApproval,
     approveApproval,
     rejectApproval
 } from '../controller/approvalController';
@@ -23,17 +23,17 @@ approvalRouter.get('/', listApprovals);
 approvalRouter.get('/:id', getApprovalDetail);
 
 // 3. 新建审批单 (POST /approvals)
-// approvalRouter.post('/', createApproval);
+approvalRouter.post('/', createApproval);
 
 // 4. 修改审批单 (PUT /approvals/:id)
-// approvalRouter.put('/:id', updateApproval);
+approvalRouter.put('/:id', updateApproval);
 
 /**
  * 审批流程操作接口
  */
 
 // 5. 撤回审批单 (POST /approvals/:id/withdraw)
-// approvalRouter.post('/:id/withdraw', withdrawApproval);
+approvalRouter.post('/:id/withdraw', withdrawApproval);
 
 // 6. 通过审批 (POST /approvals/:id/approve)
 approvalRouter.post('/:id/approve', approveApproval);
