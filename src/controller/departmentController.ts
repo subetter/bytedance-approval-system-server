@@ -1,12 +1,10 @@
 import { Context } from 'koa';
 import pool from '../config/db';
 import { RowDataPacket } from 'mysql2/promise';
+import { computePaths, DeptLike } from '../utils/departmentUtils';
 
 // 辅助类型
-interface DepartmentRow extends RowDataPacket {
-    id: number;
-    parent_id?: number | null;
-    name: string;
+type DepartmentRow = DeptLike & RowDataPacket & {
     level: number;
     is_active: 0 | 1 | boolean;
     created_at: string;
@@ -31,6 +29,8 @@ const buildTree = (rows: DepartmentRow[]) => {
     return roots;
 };
 
+// Use computePaths from utils (imported above)
+
 /**
  * 获取部门列表
  * 支持查询参数：
@@ -45,6 +45,8 @@ export const getDepartments = async (ctx: Context) => {
         const onlyActive = (active as string) !== 'false';
         const sql = onlyActive ? 'SELECT * FROM departments WHERE is_active = TRUE ORDER BY level, id' : 'SELECT * FROM departments ORDER BY level, id';
         const [rows] = await pool.execute<DepartmentRow[]>(sql);
+        // 计算每个节点的 path（使用共享工具）
+        computePaths(rows as any);
 
         if (treeFlag) {
             const result = buildTree(rows);
@@ -54,7 +56,7 @@ export const getDepartments = async (ctx: Context) => {
                 const toOptionsTree = (nodes: any[]): any[] => {
                     return nodes.map(n => {
                         const children = n.children && n.children.length ? toOptionsTree(n.children) : undefined;
-                        const obj: any = { value: n.id, label: n.name };
+                        const obj: any = { value: n.id, label: n.name, path: n.path };
                         if (children && children.length) obj.children = children;
                         return obj;
                     });
@@ -83,12 +85,22 @@ export const getDepartments = async (ctx: Context) => {
 export const getDepartmentById = async (ctx: Context) => {
     const { id } = ctx.params;
     try {
-        const [rows] = await pool.execute<DepartmentRow[]>('SELECT * FROM departments WHERE id = ?', [id]);
-        if ((rows as DepartmentRow[]).length === 0) {
+        // 为了避免循环 DB 查询，读取所有部门并计算 path，然后从中取出目标部门
+        const [allRows] = await pool.execute<DepartmentRow[]>('SELECT * FROM departments');
+        if (!allRows || (allRows as DepartmentRow[]).length === 0) {
+            ctx.throw(404, `部门数据为空`);
+            return;
+        }
+        // 计算 path 并注入到所有 rows 上
+        const populated = computePaths(allRows as any) as DepartmentRow[];
+        const deptId = parseInt(id as string);
+        const dept = (populated as DepartmentRow[]).find(r => r.id === deptId);
+        if (!dept) {
             ctx.throw(404, `部门 ID ${id} 不存在`);
             return;
         }
-        ctx.body = { code: 200, message: '查询部门成功', data: rows[0] };
+        const result = { ...dept } as DepartmentRow;
+        ctx.body = { code: 200, message: '查询部门成功', data: result };
     } catch (err: any) {
         console.error(`查询部门 ${id} 失败:`, err);
         ctx.throw(500, '查询部门失败', { details: err.message });

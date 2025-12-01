@@ -1,6 +1,7 @@
 import { Context } from 'koa';
 import pool from '../config/db';
 import { RowDataPacket } from 'mysql2/promise';
+import { computePathMap, DeptLike } from '../utils/departmentUtils';
 
 // ----------------------------------------------------------------------
 // 辅助类型定义 (修复请求体类型问题)
@@ -43,74 +44,6 @@ const getAuthUser = (ctx: Context): { userId: number, role: UserRole } => {
 // ----------------------------------------------------------------------
 // 1. 查询审批单列表接口 (GET /approvals)
 // ----------------------------------------------------------------------
-// export const listApprovals = async (ctx: CustomContext) => {
-//     // 获取查询参数
-//     const {
-//         page = 1, pageSize = 10
-//     } = ctx.query;
-//     const { userId, role } = getAuthUser(ctx);
-//     console.log('---------------');
-//     console.log('ctx:', ctx.query);
-//     console.log('---------------');
-
-//     let whereClauses: string[] = ['is_deleted = FALSE'];
-//     let queryParams: (string | number | Date)[] = [];
-
-//     // 1. 角色筛选逻辑 (确定查看范围)
-//     if (role === 'APPLICANT') {
-//         // 申请人只查看自己提交的
-//         // whereClauses.push('applicant_id = ?');
-//         // queryParams.push(userId);
-//     } else if (role === 'APPROVER') {
-//         // 审批员只查看待自己审批的 (状态 0)
-//         whereClauses.push(' current_approver_id = ?');
-//         whereClauses.push("status = '0'"); // 明确查看待审批状态
-//         queryParams.push(userId);
-//     }
-
-
-//     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-
-//     // 3. 分页参数
-//     const limit = parseInt(pageSize as string);
-//     const offset = (parseInt(page as string) - 1) * limit;
-
-//     try {
-//         // 获取总数
-//         const [totalResult] = await pool.execute<RowDataPacket[]>(
-//             `SELECT COUNT(id) AS total FROM approval_forms ${whereSql}`,
-//             queryParams
-//         );
-//         const total = totalResult[0].total;
-//         console.log('queryParams:', queryParams);
-//         console.log('whereSql:', whereSql);
-//         console.log('offset:', offset);
-//         console.log('limit:', limit);
-
-//         console.log(`SELECT * FROM approval_forms ${whereSql} LIMIT ${offset},${limit}`, ...queryParams);
-
-//         // 获取列表数据 (联表查询用户和部门信息)    
-//         const [listResult] = await pool.execute<RowDataPacket[]>(
-//             `SELECT * FROM approval_forms ${whereSql} LIMIT ${offset},${limit}`,
-//             queryParams
-//         );
-
-//         ctx.body = {
-//             code: 200,
-//             message: '查询成功',
-//             data: {
-//                 list: listResult,
-//                 total: total,
-//                 page: parseInt(page as string),
-//                 pageSize: limit,
-//             },
-//         };
-//         ctx.status = 200;
-//     } catch (error: any) { // 修复 ts(18046) 错误
-//         console.error('查询审批单列表失败:', error);
-//         ctx.throw(500, '查询审批单列表失败', { details: error.message }); // 使用 error.message
-//     }
-// };
 export const listApprovals = async (ctx: CustomContext) => {
     // 获取查询参数
     const {
@@ -191,6 +124,9 @@ export const listApprovals = async (ctx: CustomContext) => {
     const offset = (parseInt(page as string) - 1) * limit;
 
     try {
+        // 读取部门数据并构建 id->path 的映射（共享工具）
+        const [deptRows] = await pool.execute<RowDataPacket[]>(`SELECT id, parent_id, name FROM departments`);
+        const deptPathMap = computePathMap(deptRows as any as DeptLike[]);
         // --- 统计总数 ---
         // SQL: SELECT COUNT(af.id) AS total FROM approval_forms af [WHERE ...]
         const [totalResult] = await pool.execute<RowDataPacket[]>(
@@ -203,7 +139,8 @@ export const listApprovals = async (ctx: CustomContext) => {
         // 核心修复：直接嵌入 LIMIT 和 OFFSET，不再使用占位符，以避免 mysqld_stmt_execute 错误
         const listSql = `
              SELECT 
-                af.id, af.project_name, af.status, af.created_at, af.approval_at,
+             af.department_id,
+                af.id, af.project_name, af.status, af.content,af.created_at, af.approval_at,
                 u.display_name AS applicant_name, 
                 d.name AS department_name, -- 联表获取部门名称
                 appr.display_name AS current_approver_name -- 联表获取当前审批人名称
@@ -220,12 +157,18 @@ export const listApprovals = async (ctx: CustomContext) => {
         console.log('-------finalQueryParams-------', finalQueryParams);
 
         const [listResult] = await pool.execute<RowDataPacket[]>(listSql, finalQueryParams);
+        // 注入 department_path 字段，便于前端直接使用
+        const listWithPaths = (listResult as any[]).map(item => ({
+            ...item,
+            // 确保 key 为 number
+            department_path: item.department_id ? deptPathMap.get(Number(item.department_id)) || '' : '',
+        }));
 
         ctx.body = {
             code: 200,
             message: '查询成功',
             data: {
-                list: listResult,
+                list: listWithPaths,
                 total: total,
                 page: parseInt(page as string),
                 pageSize: limit,
@@ -264,6 +207,10 @@ export const getApprovalDetail = async (ctx: CustomContext) => {
         }
 
         const approvalForm = formResult[0];
+        // 注入部门 path（通过 utils）
+        const [deptRows] = await pool.execute<RowDataPacket[]>(`SELECT id, parent_id, name FROM departments`);
+        const deptPathMap = computePathMap(deptRows as any as DeptLike[]);
+        (approvalForm as any).department_path = approvalForm.department_id ? deptPathMap.get(approvalForm.department_id) || '' : '';
 
         // 2. 查询流转记录 (Log)
         const [logResult] = await pool.execute<RowDataPacket[]>(
