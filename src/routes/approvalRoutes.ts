@@ -5,8 +5,8 @@ import {
     // createApproval,
     // updateApproval,
     // withdrawApproval,
-    // approveApproval,
-    // rejectApproval
+    approveApproval,
+    rejectApproval
 } from '../controller/approvalController';
 
 // 使用 '/approvals' 作为路由前缀
@@ -36,10 +36,10 @@ approvalRouter.get('/:id', getApprovalDetail);
 // approvalRouter.post('/:id/withdraw', withdrawApproval);
 
 // 6. 通过审批 (POST /approvals/:id/approve)
-// approvalRouter.post('/:id/approve', approveApproval);
+approvalRouter.post('/:id/approve', approveApproval);
 
 // 7. 驳回审批单 (POST /approvals/:id/reject)
-// approvalRouter.post('/:id/reject', rejectApproval);
+approvalRouter.post('/:id/reject', rejectApproval);
 
 
 export default approvalRouter;

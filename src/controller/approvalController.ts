@@ -16,6 +16,7 @@ interface RequestBody {
     executeDate?: Date;
     attachmentIds?: number[];
     comment?: string;
+    role: string;
     // 添加其他可能在请求体中出现的字段
 }
 
@@ -34,10 +35,18 @@ type ApprovalStatus = '0' | '1' | '2' | '3';
  * @description 模拟从认证上下文获取用户信息。
  * ⚠️ 实际项目中，此逻辑应由 JWT 或 Session 认证中间件完成。
  */
-const getAuthUser = (ctx: Context): { userId: number, role: UserRole } => {
+const getAuthUser = (ctx: CustomContext): { userId: number, role: UserRole } => {
     // 默认使用用户 ID 101 (张三, 申请人)
-    const userId = parseInt(ctx.query.userId as string || '101');
-    const role = (ctx.query.userRole as UserRole) || 'APPLICANT';
+    const userId = parseInt((ctx.query.userId as string) || '101');
+    // 优先从 query 获取 role，再从 body 获取，最后默认 APPLICANT
+    const parseRole = (r?: string | UserRole): UserRole | undefined => {
+        if (r === 'APPLICANT' || r === 'APPROVER') return r;
+        return undefined;
+    };
+
+    const roleFromQuery = parseRole(ctx.query.role as unknown as string);
+    const roleFromBody = parseRole(ctx.request?.body?.role as unknown as string);
+    const role = roleFromQuery || roleFromBody || 'APPLICANT';
     return { userId, role };
 };
 
@@ -52,6 +61,7 @@ export const listApprovals = async (ctx: CustomContext) => {
         approvalTimeStart, approvalTimeEnd // 新增审批时间筛选
     } = ctx.query;
     const { userId, role } = getAuthUser(ctx);
+    console.log('---------role:-----------', role);
 
     let whereClauses: string[] = ['af.is_deleted = FALSE'];
     let queryParams: (string | number | Date)[] = [];
@@ -62,9 +72,10 @@ export const listApprovals = async (ctx: CustomContext) => {
         // whereClauses.push('af.applicant_id = ?');
         // queryParams.push(userId);
     } else if (role === 'APPROVER') {
+        console.log('-------APPROVER role detected-------');
         // 审批员只查看待自己审批的 (状态 0)
         // whereClauses.push('af.current_approver_id = ?');
-        // whereClauses.push("af.status = '0'"); // 明确查看待审批状态
+        whereClauses.push("af.status = '0'"); // 明确查看待审批状态
         // queryParams.push(userId);
     }
     // ADMIN 角色会跳过以上筛选，查询所有
@@ -381,23 +392,16 @@ export const withdrawApproval = async (ctx: CustomContext) => {
 export const approveApproval = async (ctx: CustomContext) => {
     const { id } = ctx.params;
     const { userId, role } = getAuthUser(ctx);
-    const { comment = '同意通过' } = ctx.request.body || {}; // 修复 ts(2339) 错误
+    const { comment = '同意通过' } = ctx.request.body || {};
 
+    // 只需要角色判断（不需要核对 current_approver_id）
     if (role !== 'APPROVER') {
+        console.log('role-------', role);
         ctx.throw(403, '只有审批员可以执行通过操作');
     }
-
     try {
-        // 1. 检查权限和状态 (确保是当前审批人且状态为 '0')
-        const [checkResult] = await pool.execute<RowDataPacket[]>(
-            `SELECT status, current_approver_id FROM approval_forms WHERE id = ?`, [id]
-        );
 
-        if (checkResult.length === 0 || checkResult[0].current_approver_id !== userId || checkResult[0].status !== '0') {
-            ctx.throw(403, '无权审批或审批单已处理');
-        }
-
-        // 2. 更新状态为 '已通过' ('1')
+        // 更新状态为 '已通过' ('1')
         await pool.execute(
             `UPDATE approval_forms SET status = '1', approval_at = NOW(), current_approver_id = NULL
              WHERE id = ?`,
@@ -405,6 +409,7 @@ export const approveApproval = async (ctx: CustomContext) => {
         );
 
         // 3. 插入日志
+        // 插入日志：记录操作人 operator_id
         await pool.execute(
             `INSERT INTO approval_logs (form_id, operator_id, action, comment) 
              VALUES (?, ?, 'APPROVE', ?)`,
@@ -412,7 +417,7 @@ export const approveApproval = async (ctx: CustomContext) => {
         );
 
         ctx.body = { code: 200, message: '审批已通过', data: { id } };
-    } catch (error: any) { // 修复 ts(18046) 错误
+    } catch (error: any) {
         console.error(`通过审批 ${id} 失败:`, error);
         ctx.throw(error.status || 500, error.message || '审批通过操作失败', { details: error.message });
     }
@@ -424,24 +429,22 @@ export const approveApproval = async (ctx: CustomContext) => {
 export const rejectApproval = async (ctx: CustomContext) => {
     const { id } = ctx.params;
     const { userId, role } = getAuthUser(ctx);
-    const { comment } = ctx.request.body || {}; // 修复 ts(2339) 错误
+    const { comment = '拒绝' } = ctx.request.body || {};
 
+    // 仅基于角色做判断，不再依赖 current_approver_id
+    console.log('role-------', role);
     if (role !== 'APPROVER') {
         ctx.throw(403, '只有审批员可以执行驳回操作');
     }
-    if (!comment) {
-        ctx.throw(400, '驳回审批必须提供理由(comment)');
-    }
+    // if (!comment) {
+    //     ctx.throw(400, '驳回审批必须提供理由(comment)');
+    // }
 
     try {
-        // 1. 检查权限和状态 (同 approveApproval)
-        const [checkResult] = await pool.execute<RowDataPacket[]>(
-            `SELECT status, current_approver_id FROM approval_forms WHERE id = ?`, [id]
-        );
 
-        if (checkResult.length === 0 || checkResult[0].current_approver_id !== userId || checkResult[0].status !== '0') {
-            ctx.throw(403, '无权驳回或审批单已处理');
-        }
+        // if (checkResult.length === 0 || checkResult[0].status !== '0') {
+        //     ctx.throw(403, '审批单已处理或不存在');
+        // }
 
         // 2. 更新状态为 '已拒绝' ('2')
         await pool.execute(
@@ -451,6 +454,7 @@ export const rejectApproval = async (ctx: CustomContext) => {
         );
 
         // 3. 插入日志
+        // 插入日志：记录操作人 operator_id
         await pool.execute(
             `INSERT INTO approval_logs (form_id, operator_id, action, comment) 
              VALUES (?, ?, 'REJECT', ?)`,
