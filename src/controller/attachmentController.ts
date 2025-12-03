@@ -1,7 +1,8 @@
 import { Context } from 'koa';
+import path from 'path';
+import fs from 'fs/promises';
 import pool from '../config/db';
 import { RowDataPacket } from 'mysql2/promise';
-import path from 'path';
 
 // 兼容已有的 getAuthUser 实现
 const getAuthUser = (ctx: Context): { userId: number } => {
@@ -67,6 +68,59 @@ export const uploadAttachment = async (ctx: Context) => {
     }
 };
 
+export const deleteAttachment = async (ctx: Context) => {
+    const { formId, fileUrl } = (ctx.request.body || {}) as any;
+
+    if (!fileUrl) {
+        ctx.throw(400, '缺少 fileUrl 参数');
+    }
+
+    try {
+        // 1. 查询文件记录是否存在
+        const [rows] = await pool.execute<RowDataPacket[]>(
+            `SELECT * FROM approval_attachments WHERE file_url = ?`,
+            [fileUrl]
+        );
+
+        if (rows.length === 0) {
+            ctx.throw(404, '附件记录不存在');
+        }
+
+        const attachment = rows[0];
+
+        // 可选：如果传了 formId，校验是否匹配
+        if (formId && attachment.form_id && String(attachment.form_id) !== String(formId)) {
+            ctx.throw(400, '附件不属于该审批单');
+        }
+
+        // 2. 删除物理文件
+        const absolutePath = path.join(process.cwd(), 'public', fileUrl);
+
+        try {
+            await fs.unlink(absolutePath);
+            console.log('物理文件删除成功:', absolutePath);
+        } catch (err: any) {
+            console.error('物理文件删除失败 (可能文件已不存在):', err.message);
+        }
+
+        // 3. 删除数据库记录
+        await pool.execute(
+            `DELETE FROM approval_attachments WHERE id = ?`,
+            [attachment.id]
+        );
+
+        ctx.body = {
+            code: 200,
+            message: '附件删除成功'
+        };
+
+    } catch (error: any) {
+        console.error('删除附件失败:', error);
+        ctx.throw(error.status || 500, error.message || '删除附件失败');
+    }
+};
+
 export default {
     uploadAttachment,
+    deleteAttachment
 };
