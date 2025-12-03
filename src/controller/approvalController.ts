@@ -8,7 +8,6 @@ import { computePathMap, DeptLike } from '../utils/departmentUtils';
 // ----------------------------------------------------------------------
 
 // 声明 Koa Context 的扩展类型，添加 body 属性
-// 假设您的 body-parser 中间件已经配置好
 interface RequestBody {
     projectName?: string;
     content?: string;
@@ -18,6 +17,7 @@ interface RequestBody {
     comment?: string;
     role: string;
     // 添加其他可能在请求体中出现的字段
+    [key: string]: any;
 }
 
 interface CustomContext extends Context {
@@ -58,7 +58,7 @@ export const listApprovals = async (ctx: CustomContext) => {
     const {
         page = 1, pageSize = 10, status, projectName,
         departmentId, createTimeStart, createTimeEnd,
-        approvalTimeStart, approvalTimeEnd // 新增审批时间筛选
+        approvalTimeStart, approvalTimeEnd, executeDateStart, executeDateEnd // 新增审批时间筛选
     } = ctx.query;
     const { userId, role } = getAuthUser(ctx);
     console.log('---------role:-----------', role);
@@ -69,14 +69,12 @@ export const listApprovals = async (ctx: CustomContext) => {
     // 1. 角色筛选逻辑 (确定查看范围)
     if (role === 'APPLICANT') {
         // 申请人只查看自己提交的
-        // whereClauses.push('af.applicant_id = ?');
-        // queryParams.push(userId);
+        whereClauses.push('af.applicant_id = ?');
+        queryParams.push(userId);
     } else if (role === 'APPROVER') {
         console.log('-------APPROVER role detected-------');
         // 审批员只查看待自己审批的 (状态 0)
-        // whereClauses.push('af.current_approver_id = ?');
         whereClauses.push("af.status = '0'"); // 明确查看待审批状态
-        // queryParams.push(userId);
     }
     // ADMIN 角色会跳过以上筛选，查询所有
 
@@ -125,6 +123,18 @@ export const listApprovals = async (ctx: CustomContext) => {
         console.log('-------approvalTimeEnd-------', approvalTimeEnd);
         whereClauses.push('af.approval_at <= ?');
         queryParams.push(approvalTimeEnd as string);
+    }
+
+    // 执行时间范围
+    if (executeDateStart) { // 只有当 executeTimeStart 参数存在时才添加筛选
+        console.log('-------executeDateStart-------', executeDateStart);
+        whereClauses.push('af.execute_date >= ?');
+        queryParams.push(executeDateStart as string);
+    }
+    if (executeDateEnd) { // 只有当 executeTimeEnd 参数存在时才添加筛选
+        console.log('-------executeDateEnd-------', executeDateEnd);
+        whereClauses.push('af.execute_date <= ?');
+        queryParams.push(executeDateEnd as string);
     }
 
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -216,6 +226,7 @@ export const listApprovals = async (ctx: CustomContext) => {
         ctx.throw(500, '查询审批单列表失败', { details: error.message });
     }
 };
+
 // ----------------------------------------------------------------------
 // 2. 查询审批单详情接口 (GET /approvals/:id)
 // ----------------------------------------------------------------------
@@ -279,25 +290,21 @@ export const getApprovalDetail = async (ctx: CustomContext) => {
             message: '查询详情成功',
             data: {
                 ...approvalForm,
-                logs: logResult,
-                attachments: attachments,
-            },
+                attachments
+            }
         };
-
-    } catch (error: any) { // 修复 ts(18046) 错误
-        console.error(`查询审批单 ${id} 详情失败:`, error);
+    } catch (error: any) {
+        console.error('查询审批单详情失败:', error);
         ctx.throw(500, '查询审批单详情失败', { details: error.message });
     }
 };
 
 // ----------------------------------------------------------------------
-// 3. 新建审批单接口 (POST /approvals)
+// 3. 创建审批单接口 (POST /approvals)
 // ----------------------------------------------------------------------
 export const createApproval = async (ctx: CustomContext) => {
-    // departmentId 现在是 BIGINT，需要确保前端传的是 ID
     const { projectName, content, departmentId, executeDate, attachmentIds } = ctx.request.body || {};
     const { userId } = getAuthUser(ctx);
-    console.log('-------ctx.body-------', ctx.request.body);
 
     if (!projectName || !content || !departmentId || !executeDate) {
         ctx.throw(400, '缺少必要的表单字段');
@@ -307,7 +314,7 @@ export const createApproval = async (ctx: CustomContext) => {
     const nextApproverId = 102;
 
     try {
-        // 1. 插入主表，使用 department_id 字段
+        // 1. 插入主表
         const [insertResult] = await pool.execute(
             `INSERT INTO approval_forms 
              (project_name, content, department_id, execute_date, applicant_id, current_approver_id, status)
@@ -323,11 +330,11 @@ export const createApproval = async (ctx: CustomContext) => {
             [newFormId, userId]
         );
 
-        // 3. 关联附件 (如果附件ID已存在)
+        // 3. 关联附件
         if (attachmentIds && attachmentIds.length > 0) {
-            // 确保附件 ID 属于当前用户上传，并将其关联到新的 form_id
-            const updateAttachmentsSql = `UPDATE approval_attachments SET form_id = ? WHERE id IN (?) AND uploader_id = ? AND form_id IS NULL`;
-            await pool.execute(updateAttachmentsSql, [newFormId, attachmentIds, userId]);
+            const placeholders = attachmentIds.map(() => '?').join(',');
+            const updateAttachmentsSql = `UPDATE approval_attachments SET form_id = ? WHERE id IN (${placeholders}) AND uploader_id = ? AND form_id IS NULL`;
+            await pool.execute(updateAttachmentsSql, [newFormId, ...attachmentIds, userId]);
         }
 
         ctx.body = {
@@ -335,12 +342,76 @@ export const createApproval = async (ctx: CustomContext) => {
             message: '审批单创建成功',
             data: { id: newFormId },
         };
-        ctx.status = 201; // Created
+        ctx.status = 201;
 
-    } catch (error: any) { // 修复 ts(18046) 错误
+    } catch (error: any) {
         console.error('创建审批单失败:', error);
         ctx.throw(500, '审批单创建失败', { details: error.message });
     }
+};
+
+// ----------------------------------------------------------------------
+// 3.1 批量新建审批单接口 (POST /approvals/batch)
+// ----------------------------------------------------------------------
+export const batchCreateApprovals = async (ctx: CustomContext) => {
+    const body = ctx.request.body || {};
+    console.log('===批量新建审批单接口====');
+    console.log('===body====', body);
+    const items: any[] = Array.isArray(body) ? body : [];
+
+    const { userId } = getAuthUser(ctx);
+
+    if (!items || items.length === 0) {
+        ctx.throw(400, '批量创建列表为空');
+    }
+
+    const results = {
+        success: 0,
+        failed: 0,
+        errors: [] as any[]
+    };
+    console.log('===items====', items);
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        console.log('====items====', item);
+        const projectName = item.projectName || item['审批项目'];
+        const content = item.content || item['审批内容'];
+        const departmentId = item.departmentId || item['申请部门'];
+        const executeDate = item.executeDate || item['执行日期'];
+
+        if (!projectName || !content || !departmentId || !executeDate) {
+            results.failed++;
+            results.errors.push({ index: i, message: '缺少必要字段' });
+            continue;
+        }
+
+        try {
+            const [insertResult] = await pool.execute(
+                `INSERT INTO approval_forms 
+                 (project_name, content, department_id, execute_date, applicant_id, status)
+                 VALUES (?, ?, ?, ?, ?, '0')`,
+                [projectName, content, departmentId, executeDate, userId]
+            );
+            const newFormId = (insertResult as any).insertId;
+
+            await pool.execute(
+                `INSERT INTO approval_logs (form_id, operator_id, action, comment) 
+                 VALUES (?, ?, 'CREATE', '批量导入创建')`,
+                [newFormId, userId]
+            );
+            results.success++;
+        } catch (err: any) {
+            results.failed++;
+            console.log('===err====', err);
+            results.errors.push({ index: i, message: err.message });
+        }
+    }
+
+    ctx.body = {
+        code: 200,
+        message: `批量处理完成: 成功 ${results.success} 条, 失败 ${results.failed} 条`,
+        data: results
+    };
 };
 
 // ----------------------------------------------------------------------
@@ -350,28 +421,23 @@ export const updateApproval = async (ctx: CustomContext) => {
     const { id } = ctx.params;
     const { userId } = getAuthUser(ctx);
     const { projectName, content, executeDate, departmentId } = ctx.request.body || {};
-    console.log('========ctx.body========', ctx.request.body);
 
     try {
-        // 1. 检查权限和状态
         const [checkResult] = await pool.execute<RowDataPacket[]>(
             `SELECT status, applicant_id FROM approval_forms WHERE id = ?`, [id]
         );
 
-        // 只有申请人可以修改，且状态必须是 '0' (待审批) 或 '2' (已拒绝/需重提)
         const allowedStatuses: ApprovalStatus[] = ['0', '2'];
         if (checkResult.length === 0 || checkResult[0].applicant_id !== userId || !allowedStatuses.includes(checkResult[0].status as ApprovalStatus)) {
             ctx.throw(403, '无权修改或审批单已在流程中/已通过');
         }
 
-        // 2. 更新主表，使用 department_id 字段
         await pool.execute(
             `UPDATE approval_forms SET project_name = ?, content = ?, department_id = ?, execute_date = ? 
              WHERE id = ?`,
             [projectName, content, departmentId, executeDate, id]
         );
 
-        // 3. 插入日志
         await pool.execute(
             `INSERT INTO approval_logs (form_id, operator_id, action, comment) 
              VALUES (?, ?, 'UPDATE', '审批单数据修改')`,
@@ -379,7 +445,7 @@ export const updateApproval = async (ctx: CustomContext) => {
         );
 
         ctx.body = { code: 200, message: '审批单修改成功', data: { id } };
-    } catch (error: any) { // 修复 ts(18046) 错误
+    } catch (error: any) {
         console.error(`修改审批单 ${id} 失败:`, error);
         ctx.throw(error.status || 500, error.message || '审批单修改失败', { details: error.message });
     }
@@ -393,15 +459,11 @@ export const withdrawApproval = async (ctx: CustomContext) => {
     const { userId } = getAuthUser(ctx);
 
     try {
-
-        // 2. 标记为已删除 (is_deleted = TRUE)
         await pool.execute(
-            `UPDATE approval_forms SET is_deleted = TRUE
-             WHERE id = ?`,
+            `UPDATE approval_forms SET is_deleted = TRUE WHERE id = ?`,
             [id]
         );
 
-        // 3. 插入日志（记录删除操作）
         await pool.execute(
             `INSERT INTO approval_logs (form_id, operator_id, action, comment) 
              VALUES (?, ?, 'WITHDRAW', '申请人撤回审批单')`,
@@ -423,22 +485,16 @@ export const approveApproval = async (ctx: CustomContext) => {
     const { userId, role } = getAuthUser(ctx);
     const { comment = '同意通过' } = ctx.request.body || {};
 
-    // 只需要角色判断（不需要核对 current_approver_id）
     if (role !== 'APPROVER') {
-        console.log('role-------', role);
         ctx.throw(403, '只有审批员可以执行通过操作');
     }
     try {
-
-        // 更新状态为 '已通过' ('1')
         await pool.execute(
             `UPDATE approval_forms SET status = '1', approval_at = NOW(), current_approver_id = NULL
              WHERE id = ?`,
             [id]
         );
 
-        // 3. 插入日志
-        // 插入日志：记录操作人 operator_id
         await pool.execute(
             `INSERT INTO approval_logs (form_id, operator_id, action, comment) 
              VALUES (?, ?, 'APPROVE', ?)`,
@@ -460,30 +516,17 @@ export const rejectApproval = async (ctx: CustomContext) => {
     const { userId, role } = getAuthUser(ctx);
     const { comment = '拒绝' } = ctx.request.body || {};
 
-    // 仅基于角色做判断，不再依赖 current_approver_id
-    console.log('role-------', role);
     if (role !== 'APPROVER') {
         ctx.throw(403, '只有审批员可以执行驳回操作');
     }
-    // if (!comment) {
-    //     ctx.throw(400, '驳回审批必须提供理由(comment)');
-    // }
 
     try {
-
-        // if (checkResult.length === 0 || checkResult[0].status !== '0') {
-        //     ctx.throw(403, '审批单已处理或不存在');
-        // }
-
-        // 2. 更新状态为 '已拒绝' ('2')
         await pool.execute(
             `UPDATE approval_forms SET status = '2', approval_at = NOW(), current_approver_id = NULL 
              WHERE id = ?`,
             [id]
         );
 
-        // 3. 插入日志
-        // 插入日志：记录操作人 operator_id
         await pool.execute(
             `INSERT INTO approval_logs (form_id, operator_id, action, comment) 
              VALUES (?, ?, 'REJECT', ?)`,
@@ -491,7 +534,7 @@ export const rejectApproval = async (ctx: CustomContext) => {
         );
 
         ctx.body = { code: 200, message: '审批已驳回', data: { id } };
-    } catch (error: any) { // 修复 ts(18046) 错误
+    } catch (error: any) {
         console.error(`驳回审批 ${id} 失败:`, error);
         ctx.throw(error.status || 500, error.message || '审批驳回操作失败', { details: error.message });
     }

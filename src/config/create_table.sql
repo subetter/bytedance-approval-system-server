@@ -300,3 +300,63 @@ VALUES
 
 --查看approval_forms表的所有列
 SELECT * FROM approval_forms;
+
+-- =======================================================
+-- 6. 表单配置表 (form_schemas) -- 新增
+-- 存储动态表单的 JSON Schema
+-- =======================================================
+CREATE TABLE IF NOT EXISTS `form_schemas` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `schema_key` VARCHAR(50) NOT NULL UNIQUE COMMENT '配置唯一标识 Key',
+    `name` VARCHAR(100) NOT NULL COMMENT '配置名称',
+    `schema_content` JSON NOT NULL COMMENT '表单结构的 JSON Schema 内容',
+    `is_active` BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否启用',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '表单配置表';
+
+-- 确保 form_schemas 表已存在
+
+INSERT INTO
+    form_schemas (
+        schema_key,
+        name,
+        schema_content,
+        is_active
+    )
+VALUES (
+        'basic_approval',
+        '基础审批单',
+        -- 核心：将 JSON 数组转义为字符串，适用于 JSON 或 TEXT 字段
+        '[{
+        "field": "projectName",
+        "name": "审批项目",
+        "component": "Input",
+        "validator": { "required": true, "maxCount": 10 }
+    }, {
+        "field": "content",
+        "name": "审批内容",
+        "component": "Textarea",
+        "validator": { "required": true, "maxCount": 100 }
+    }, {
+        "field": "departmentId",
+        "name": "申请部门",
+        "component": "Cascader",
+        "validator": { "required": true }
+    }, {
+        "field": "executeDate",
+        "name": "执行日期",
+        "component": "DatePicker",
+        "validator": { "required": true }
+    }, {
+        "field": "approvalAt",
+        "name": "审批时间",
+        "component": "DatePicker",
+        "validator": { "required": false }
+    }]',
+        TRUE
+    )
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    schema_content = VALUES(schema_content),
+    is_active = VALUES(is_active);

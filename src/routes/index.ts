@@ -46,8 +46,9 @@ apiRouter.use(departmentRouter.allowedMethods());
 apiRouter.use(attachmentRouter.routes());
 apiRouter.use(attachmentRouter.allowedMethods());
 
-// apiRouter.use(formRouter.routes());
-// apiRouter.use(formRouter.allowedMethods());
+import formSchemaRouter from './formSchemaRoutes';
+apiRouter.use(formSchemaRouter.routes());
+apiRouter.use(formSchemaRouter.allowedMethods());
 
 
 export default apiRouter;
