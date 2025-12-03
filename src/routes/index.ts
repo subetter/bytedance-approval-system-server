@@ -38,8 +38,13 @@ apiRouter.use(approvalRouter.allowedMethods());
 // 表单配置接口 (例如：GET /api/form/schema)
 // 部门接口 (例如：GET /api/departments)
 import departmentRouter from './departmentRoutes';
+import attachmentRouter from './attachmentRoutes';
 apiRouter.use(departmentRouter.routes());
 apiRouter.use(departmentRouter.allowedMethods());
+
+// 附件上传路由
+apiRouter.use(attachmentRouter.routes());
+apiRouter.use(attachmentRouter.allowedMethods());
 
 // apiRouter.use(formRouter.routes());
 // apiRouter.use(formRouter.allowedMethods());

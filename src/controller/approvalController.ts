@@ -168,11 +168,36 @@ export const listApprovals = async (ctx: CustomContext) => {
         console.log('-------finalQueryParams-------', finalQueryParams);
 
         const [listResult] = await pool.execute<RowDataPacket[]>(listSql, finalQueryParams);
-        // 注入 department_path 字段，便于前端直接使用
+        // --- 批量查询附件 ---
+        const approvalIds = (listResult as any[]).map(item => item.id);
+        let attachmentsMap: Record<number, any[]> = {};
+
+        if (approvalIds.length > 0) {
+            const placeholders = approvalIds.map(() => '?').join(',');
+            const [allAttachments] = await pool.execute<RowDataPacket[]>(
+                `SELECT * FROM approval_attachments WHERE form_id IN (${placeholders})`,
+                approvalIds
+            );
+
+            (allAttachments as any[]).forEach(att => {
+                if (!attachmentsMap[att.form_id]) {
+                    attachmentsMap[att.form_id] = [];
+                }
+                if (att.file_type !== 'IMAGE') {
+                    const { file_url, ...rest } = att;
+                    attachmentsMap[att.form_id].push(rest);
+                } else {
+                    attachmentsMap[att.form_id].push(att);
+                }
+            });
+        }
+
+        // 注入 department_path 和 attachments 字段
         const listWithPaths = (listResult as any[]).map(item => ({
             ...item,
             // 确保 key 为 number
             department_path: item.department_id ? deptPathMap.get(Number(item.department_id)) || '' : '',
+            attachments: attachmentsMap[item.id] || [],
         }));
 
         ctx.body = {
@@ -239,13 +264,23 @@ export const getApprovalDetail = async (ctx: CustomContext) => {
             [id]
         );
 
+        // 处理附件：只有 file_type 为 IMAGE 时才返回 file_url
+        const attachments = (attachmentResult as any[]).map(att => {
+            if (att.file_type === 'IMAGE') {
+                return att;
+            } else {
+                const { file_url, ...rest } = att;
+                return rest;
+            }
+        });
+
         ctx.body = {
             code: 200,
             message: '查询详情成功',
             data: {
                 ...approvalForm,
                 logs: logResult,
-                attachments: attachmentResult,
+                attachments: attachments,
             },
         };
 
@@ -315,6 +350,7 @@ export const updateApproval = async (ctx: CustomContext) => {
     const { id } = ctx.params;
     const { userId } = getAuthUser(ctx);
     const { projectName, content, executeDate, departmentId } = ctx.request.body || {};
+    console.log('========ctx.body========', ctx.request.body);
 
     try {
         // 1. 检查权限和状态

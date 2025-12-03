@@ -1,11 +1,13 @@
 // src/server.ts
 
 import Koa, { Context } from 'koa'; // 引入 Koa 和 Context 类型
+import path from 'path';
+import serve from 'koa-static';
 // 确保您的 db.ts 是通过 export default pool 导出的，这里通过副作用导入执行 testConnection()
 import './config/db';
 import errorHandlerMiddleware from './middleware/errorHandler';
 import loggerMiddleware from './middleware/logger';
-import bodyParser from 'koa-bodyparser';
+import koaBody from 'koa-body';
 import apiRouter from './routes' // 引入路由汇总文件 (src/routes/index.ts)
 
 // 2.创建 Koa 应用实例
@@ -21,12 +23,21 @@ app.use(errorHandlerMiddleware);
 // 日志中间件
 app.use(loggerMiddleware);
 
-// Body parser middleware (解析 JSON/urlencoded form)
-app.use(bodyParser({ enableTypes: ['json', 'form'], jsonLimit: '10mb' }));
+// Body parser middleware (解析 JSON/urlencoded form，不处理 multipart 让路由层 koa-body 处理)
+app.use(koaBody({
+    multipart: true,
+    formidable: {
+        uploadDir: path.join(process.cwd(), "/public/upload"),
+        keepExtensions: true,
+    }
+}));
 
 // 3. 注册路由
 app.use(apiRouter.routes());
 app.use(apiRouter.allowedMethods());
+
+// 静态服务 uploads 文件夹（用于返回文件访问 URL）
+app.use(serve(path.join(process.cwd(), 'public')));
 
 // 4. 404 错误处理（如果所有路由都不匹配，则返回 404）
 app.use(async (ctx: Context) => {
