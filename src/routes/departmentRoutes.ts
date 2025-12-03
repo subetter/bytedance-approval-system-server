@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { getDepartments, getDepartmentById } from '../controller/departmentController';
+import { getDepartments, getDepartmentById, getDepartmentByName } from '../controller/departmentController';
 
 // route: /departments
 const router = new Router({ prefix: '/departments' });
@@ -13,6 +13,9 @@ const router = new Router({ prefix: '/departments' });
  *  - active=true (只返回启用的部门)
  */
 router.get('/', getDepartments);
+
+// GET /departments/byname/:name
+router.get('/byname/:name', getDepartmentByName);
 
 // GET /departments/:id
 router.get('/:id', getDepartmentById);

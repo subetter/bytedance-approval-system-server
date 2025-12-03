@@ -3,6 +3,7 @@ import {
     listApprovals,
     getApprovalDetail,
     createApproval,
+    batchCreateApprovals,
     updateApproval,
     withdrawApproval,
     approveApproval,
@@ -18,6 +19,10 @@ const approvalRouter = new Router({ prefix: '/approvals' });
 
 // 1. 查询审批单列表 (GET /approvals)
 approvalRouter.get('/', listApprovals);
+
+// 3.1 批量新建审批单 (POST /approvals/batch)
+// 必须在 /:id 之前注册，否则会被识别为 id
+approvalRouter.post('/batch', batchCreateApprovals);
 
 // 2. 查询审批单详情 (GET /approvals/:id)
 approvalRouter.get('/:id', getApprovalDetail);

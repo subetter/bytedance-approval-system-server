@@ -107,4 +107,21 @@ export const getDepartmentById = async (ctx: Context) => {
     }
 };
 
+export const getDepartmentByName = async (ctx: Context) => {
+    const { name } = ctx.params;
+    console.log('========name:=======', name);
+    try {
+        const [rows] = await pool.execute<DepartmentRow[]>('SELECT * FROM departments WHERE name = ?', [name]);
+        console.log('========rows:=======', rows);
+        if (!rows || (rows as DepartmentRow[]).length === 0) {
+            ctx.throw(404, `部门 ${name} 不存在`);
+            return;
+        }
+        const result = { ...rows[0] } as DepartmentRow;
+        ctx.body = { code: 200, message: '查询部门成功', data: result };
+    } catch (err: any) {
+        console.error(`查询部门 ${name} 失败:`, err);
+        ctx.throw(500, '查询部门失败', { details: err.message });
+    }
+};
 
