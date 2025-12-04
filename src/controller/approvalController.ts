@@ -2,6 +2,10 @@ import { Context } from 'koa';
 import pool from '../config/db';
 import { RowDataPacket } from 'mysql2/promise';
 import { computePathMap, DeptLike } from '../utils/departmentUtils';
+import fs from 'fs/promises';
+import path from 'path';
+
+
 
 // ----------------------------------------------------------------------
 // 辅助类型定义 (修复请求体类型问题)
@@ -420,7 +424,7 @@ export const batchCreateApprovals = async (ctx: CustomContext) => {
 export const updateApproval = async (ctx: CustomContext) => {
     const { id } = ctx.params;
     const { userId } = getAuthUser(ctx);
-    const { projectName, content, executeDate, departmentId } = ctx.request.body || {};
+    const { projectName, content, executeDate, departmentId, attachmentIds } = ctx.request.body || {};
 
     try {
         const [checkResult] = await pool.execute<RowDataPacket[]>(
@@ -443,6 +447,54 @@ export const updateApproval = async (ctx: CustomContext) => {
              VALUES (?, ?, 'UPDATE', '审批单数据修改')`,
             [id, userId]
         );
+
+        // --- 处理附件同步逻辑 ---
+        if (attachmentIds) {
+            // 1. 查询当前数据库中该审批单的所有附件
+            const [currentAttachments] = await pool.execute<RowDataPacket[]>(
+                `SELECT id, file_url FROM approval_attachments WHERE form_id = ?`,
+                [id]
+            );
+
+            // 2. 找出需要删除的附件 (在数据库中存在，但不在前端提交的 attachmentIds 列表中)
+            // 注意：前端提交的 attachmentIds 应该是最终保留的附件 ID 列表
+            const keepIds = new Set(attachmentIds.map((aid: any) => Number(aid)));
+            const toDelete = (currentAttachments as any[]).filter(att => !keepIds.has(att.id));
+
+            if (toDelete.length > 0) {
+                console.log(`更新审批单 ${id}: 需要删除 ${toDelete.length} 个旧附件`);
+
+                // 3. 删除物理文件
+                for (const att of toDelete) {
+                    if (att.file_url) {
+                        const absolutePath = path.join(process.cwd(), 'public', att.file_url);
+                        try {
+                            await fs.unlink(absolutePath);
+                            console.log('物理文件删除成功:', absolutePath);
+                        } catch (err: any) {
+                            console.error('物理文件删除失败:', err.message);
+                        }
+                    }
+                }
+
+                // 4. 删除数据库记录
+                const deleteIds = toDelete.map(att => att.id);
+                const placeholders = deleteIds.map(() => '?').join(',');
+                await pool.execute(
+                    `DELETE FROM approval_attachments WHERE id IN (${placeholders})`,
+                    deleteIds
+                );
+            }
+
+            // 5. 确保保留的附件都正确关联了 form_id
+            if (attachmentIds.length > 0) {
+                const placeholders = attachmentIds.map(() => '?').join(',');
+                await pool.execute(
+                    `UPDATE approval_attachments SET form_id = ? WHERE id IN (${placeholders})`,
+                    [id, ...attachmentIds]
+                );
+            }
+        }
 
         ctx.body = { code: 200, message: '审批单修改成功', data: { id } };
     } catch (error: any) {

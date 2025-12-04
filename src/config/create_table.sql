@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS `approval_logs` (
 -- =======================================================
 CREATE TABLE IF NOT EXISTS `approval_attachments` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-    `form_id` BIGINT NOT NULL COMMENT '关联的审批单ID',
+    `form_id` BIGINT COMMENT '关联的审批单ID',
     `file_name` VARCHAR(255) NOT NULL COMMENT '原始文件名称',
     `file_url` VARCHAR(500) NOT NULL COMMENT '文件存储路径/URL',
     `file_type` ENUM('IMAGE', 'EXCEL', 'OTHER') NOT NULL COMMENT '文件类型',

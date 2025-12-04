@@ -9,6 +9,7 @@ import errorHandlerMiddleware from './middleware/errorHandler';
 import loggerMiddleware from './middleware/logger';
 import koaBody from 'koa-body';
 import apiRouter from './routes' // 引入路由汇总文件 (src/routes/index.ts)
+import { initAttachmentCleanupTask } from './services/attachmentCleanupService';
 
 // 2.创建 Koa 应用实例
 const app = new Koa();
@@ -58,6 +59,7 @@ app.on("error", (err: Error, ctx: Context) => {
 });
 
 // 6. 启动服务器，监听 3001 端口
+initAttachmentCleanupTask();
 const port = 3001;
 app.listen(port, () => {
     console.log(`服务器已启动，访问 http://localhost:${port} 查看效果`);
